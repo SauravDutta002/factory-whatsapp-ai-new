@@ -1314,7 +1314,7 @@ export default function App() {
                     <h2>WhatsApp Integration Control Panel</h2>
                     <p>Monitor status, scan pairing QR codes, and manage active sessions entirely from the dashboard.</p>
                   </div>
-                  <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                     {/* Status Badge */}
                     <span 
                       className="whatsapp-status-badge"
@@ -1334,6 +1334,59 @@ export default function App() {
                        whatsappStatus.status === 'authenticating' ? 'Authenticating...' :
                        whatsappStatus.status === 'qr' ? 'Awaiting Scan' : 'Disconnected'}
                     </span>
+
+                    {/* Moved Action Buttons */}
+                    {whatsappStatus.status === 'connected' && (
+                      <button 
+                        className="btn-whatsapp-action btn-whatsapp-action-danger"
+                        style={{ padding: '0.45rem 1rem', fontSize: '0.85rem' }}
+                        onClick={async () => {
+                          if (await customConfirm('Disconnect WhatsApp', 'Are you sure you want to disconnect WhatsApp? This will log out the active session.')) {
+                            try {
+                              setRefreshing(true);
+                              const res = await fetch('/api/whatsapp/logout', { method: 'POST' });
+                              if (res.ok) {
+                                await fetchWhatsappStatus();
+                              }
+                            } catch (err) {
+                              console.error('Logout error:', err);
+                            } finally {
+                              setRefreshing(false);
+                            }
+                          }
+                        }}
+                        disabled={refreshing}
+                      >
+                        <svg style={{ width: '16px', height: '16px', marginRight: '0.35rem' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                        </svg>
+                        Disconnect Session
+                      </button>
+                    )}
+
+                    {(whatsappStatus.status === 'disconnected' || whatsappStatus.status === 'qr') && (
+                      <button 
+                        className="btn-whatsapp-action btn-whatsapp-action-primary"
+                        style={{ padding: '0.45rem 1rem', fontSize: '0.85rem' }}
+                        onClick={async () => {
+                          try {
+                            setRefreshing(true);
+                            await fetch('/api/whatsapp/reconnect', { method: 'POST' });
+                            await fetchWhatsappStatus();
+                          } catch (err) {
+                            console.error('Reconnect error:', err);
+                          } finally {
+                            setRefreshing(false);
+                          }
+                        }}
+                        disabled={refreshing}
+                      >
+                        <svg style={{ width: '16px', height: '16px', marginRight: '0.35rem' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18" />
+                        </svg>
+                        Relaunch Client
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -1511,68 +1564,7 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* Actions row for manual overrides */}
-                  <div className="whatsapp-actions-row">
-                    {whatsappStatus.status === 'connected' && (
-                      <button 
-                        className="btn-whatsapp-action btn-whatsapp-action-danger"
-                        onClick={async () => {
-                          if (await customConfirm('Disconnect WhatsApp', 'Are you sure you want to disconnect WhatsApp? This will log out the active session.')) {
-                            try {
-                              setRefreshing(true);
-                              const res = await fetch('/api/whatsapp/logout', { method: 'POST' });
-                              if (res.ok) {
-                                await fetchWhatsappStatus();
-                                alert('Logged out successfully. Relink to start receiving messages.');
-                              } else {
-                                alert('Failed to log out.');
-                              }
-                            } catch (err) {
-                              console.error('Logout error:', err);
-                              alert('Connection error occurred during logout.');
-                            } finally {
-                              setRefreshing(false);
-                            }
-                          }
-                        }}
-                        disabled={refreshing}
-                      >
-                        <svg style={{ width: '16px', height: '16px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                        </svg>
-                        Disconnect Session
-                      </button>
-                    )}
 
-                    {(whatsappStatus.status === 'disconnected' || whatsappStatus.status === 'qr') && (
-                      <button 
-                        className="btn-whatsapp-action btn-whatsapp-action-primary"
-                        onClick={async () => {
-                          try {
-                            setRefreshing(true);
-                            const res = await fetch('/api/whatsapp/reconnect', { method: 'POST' });
-                            if (res.ok) {
-                              await fetchWhatsappStatus();
-                              alert('Client hard-relaunch triggered. Please wait a few seconds for the QR code to regenerate.');
-                            } else {
-                              alert('Failed to trigger hard-relaunch.');
-                            }
-                          } catch (err) {
-                            console.error('Reconnect error:', err);
-                            alert('Connection error occurred during relaunch.');
-                          } finally {
-                            setRefreshing(false);
-                          }
-                        }}
-                        disabled={refreshing}
-                      >
-                        <svg style={{ width: '16px', height: '16px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18" />
-                        </svg>
-                        Relaunch & Sync Client
-                      </button>
-                    )}
-                  </div>
                 </div>
               </div>
             </div>
