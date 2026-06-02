@@ -12,5 +12,12 @@
     "passwordHash": "$2b$10$zZCvBUJCUqitbP/kjrR2c.2EqJc49QBLQPorw9KwkZIh6dfc4SkPm",
     "role": "approver",
     "displayName": "Approver"
+  },
+  {
+    "id": "3",
+    "username": "manager",
+    "passwordHash": "$2b$10$eNiEmx7VskHTyKNFZsaekeG1i6Drmg0eE1LrxMKoQfiSAW2djW2vW",
+    "role": "manager",
+    "displayName": "Manager"
   }
 ]

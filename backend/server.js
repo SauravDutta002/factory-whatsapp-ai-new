@@ -6,6 +6,40 @@ const path = require('path');
 const { Pool } = require('pg');
 require('dotenv').config();
 
+// WhatsApp Bot & AI Imports
+const { Client, LocalAuth } = require('whatsapp-web.js');
+const qrcode = require('qrcode-terminal');
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const TARGET_GROUP = "120363427181556541@g.us";
+
+const whatsappClient = new Client({
+    authStrategy: new LocalAuth({ clientId: 'backend-whatsapp' }),
+    puppeteer: {
+        headless: true,
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu'
+        ]
+    },
+    webVersionCache: {
+        type: 'remote',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html'
+    }
+});
+
+let whatsappStatus = {
+    status: 'disconnected',
+    qr: null,
+    phone: null,
+    pushname: null,
+    lastConnected: null
+};
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -17,6 +51,313 @@ const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }
 });
+
+// =============================================================================
+// WhatsApp Bot & AI Helper Functions
+// =============================================================================
+
+async function savePendingRequest(item, senderName = 'WhatsApp User') {
+    try {
+        const id = Date.now() + '-' + Math.floor(Math.random() * 1000);
+        const receivedAt = new Date().toISOString();
+
+        const queryText = `
+            INSERT INTO pending_requests (
+                id, part_name, qty, size, material, machine, vendor, requested_by, 
+                demand_timestamp, received_at, rate, status
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11)
+        `;
+
+        const values = [
+            id,
+            item["Part Name"] || item.partName || '',
+            item["Qty Required"] || item.qty || '',
+            item["Size"] || item.size || '',
+            item["Material"] || item.material || '',
+            item["For Machine"] || item.machine || '',
+            item["Vendor"] || item.vendor || '',
+            senderName,
+            receivedAt,
+            item["Price"] || item.price || '',
+            'pending_review'
+        ];
+
+        console.log('--- SQL DIRECT BOT INSERTION ---');
+        console.log('Parameters:', JSON.stringify(values, null, 2));
+        console.log('---------------------------------');
+
+        await pool.query(queryText, values);
+        console.log(`Saved pending request successfully inside NeonDB: ID=${id}`);
+        return { success: true, id };
+    } catch (err) {
+        console.error('Error saving pending request directly to DB:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+async function fetchInventoryContext() {
+    try {
+        const res = await pool.query('SELECT part_name, sku, material, detail1, detail2, available_qty, unit, price, vendor FROM inventory ORDER BY part_name ASC');
+        
+        let context = "Master Inventory (Part Name | SKU | Material | Size Details | Stock Qty | Unit | Price | Preferred Vendor):\n";
+        res.rows.forEach(row => {
+            const size = [row.detail1, row.detail2].filter(Boolean).join(" / ");
+            context += `- "${row.part_name}" | SKU: ${row.sku} | Mat: ${row.material || 'N/A'} | Size: ${size || 'N/A'} | Stock: ${row.available_qty} ${row.unit || 'Pcs.'} | Price: $${row.price || '0.00'} | Vendor: ${row.vendor || 'N/A'}\n`;
+        });
+        return context;
+    } catch (err) {
+        console.error("Error fetching inventory context for Gemini:", err);
+        return "No inventory database context available due to error.";
+    }
+}
+
+async function generateWithRetry(prompt, isAudio = false, audioBase64 = null) {
+    const models = ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
+    const maxRetries = 3;
+    const delays = [2000, 4000, 6000];
+
+    for (const modelName of models) {
+        console.log(`Attempting Gemini request using model: ${modelName}`);
+        const model = genAI.getGenerativeModel({ model: modelName });
+
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                let result;
+                if (isAudio) {
+                    result = await model.generateContent([
+                        prompt,
+                        {
+                            inlineData: {
+                                mimeType: "audio/ogg",
+                                data: audioBase64
+                            }
+                        }
+                    ]);
+                } else {
+                    result = await model.generateContent(prompt);
+                }
+
+                const text = result.response.text();
+                if (text) {
+                    return text; // Success!
+                }
+            } catch (err) {
+                const errMessage = err.message || '';
+                const isTemporaryError = errMessage.includes('503') || 
+                                         errMessage.includes('high demand') || 
+                                         errMessage.includes('overload') || 
+                                         errMessage.includes('Unavailable') ||
+                                         errMessage.includes('fetch');
+
+                if (attempt < maxRetries && isTemporaryError) {
+                    const delay = delays[attempt];
+                    console.log(`Gemini retry attempt ${attempt + 1} for ${modelName} after ${delay}ms... (Error: ${errMessage})`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                } else {
+                    console.log(`Request failed for model ${modelName} on attempt ${attempt + 1}. Error: ${errMessage}`);
+                    break; // Fallback to next model or exit loop
+                }
+            }
+        }
+    }
+    return null; // All retries and models failed
+}
+
+async function processText(text) {
+    const inventoryContext = await fetchInventoryContext();
+
+    const prompt = `
+Translate to English.
+
+The message may contain ONE or MULTIPLE items/parts being requested by factory workers.
+Cross-reference each request against the provided company's Master Inventory List below.
+
+INVENTORY MATCHING RULES:
+1. Match the requested part to the closest matching item in the Master Inventory.
+2. If an inventory match is found (even with spelling variations, informal names, abbreviations, or Hindi/Punjabi terms):
+   - Use the canonical "Part Name" from the inventory.
+   - Populate "SKU" with the inventory's SKU.
+   - Populate "Size", "Material", and "Vendor" with details from the matched inventory item if not explicitly overridden by the worker's message.
+   - Populate "Available Stock", "Price", and "Category" from the matched inventory item.
+   - If the requested quantity (Qty Required) exceeds the matched inventory item's stock (Stock), generate a detailed warning in the "stockWarning" field (e.g., "Requested 5, but only 2 available in stock").
+3. If no match is found:
+   - Perform standard extraction (leave SKU, Available Stock, Price, stockWarning empty).
+   - If there is a similar item in the inventory that might be what they wanted, suggest it in the "suggestedMatch" field (e.g., "Did you mean back gauge pc (SKU: 137)?").
+
+MASTER INVENTORY:
+${inventoryContext}
+
+For EACH item extract:
+- Part Name (canonical matched name or parsed name)
+- SKU (blank if not matched)
+- Qty Required (plain number only, e.g., "1", "20")
+- Size (use detail1/detail2 format from inventory if matched)
+- Material
+- Category (blank if not matched)
+- For Machine
+- Vendor
+- Price (blank if not matched)
+- Available Stock (blank if not matched)
+- stockWarning (blank if no stock issue)
+- suggestedMatch (blank if no suggestion)
+
+Rules:
+- If Vendor is mentioned once for multiple items, apply it to ALL items
+- If "For Machine" is mentioned once for multiple items, apply it to ALL items
+- If Size or Material is not mentioned, leave it empty
+- Qty should be just the number (e.g. "1", "20", "12")
+
+Return ONLY a raw JSON array with NO markdown, NO code fences, NO explanation.
+Example format:
+[
+  {
+    "Part Name": "",
+    "SKU": "",
+    "Qty Required": "",
+    "Size": "",
+    "Material": "",
+    "Category": "",
+    "For Machine": "",
+    "Vendor": "",
+    "Price": "",
+    "Available Stock": "",
+    "stockWarning": "",
+    "suggestedMatch": ""
+  }
+]
+
+Message:
+${text}
+`;
+
+    const raw = await generateWithRetry(prompt, false, null);
+    if (!raw) {
+        console.error("Gemini failed completely after retries and fallback. Skipping text request safely.");
+        return [];
+    }
+
+    console.log("RAW GEMINI RESPONSE (text):", raw);
+
+    const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
+    try {
+        const parsed = JSON.parse(cleaned);
+        return Array.isArray(parsed) ? parsed : [parsed];
+    } catch {
+        console.log("PARSE FAILED. Raw:", raw);
+        return [{
+            "Part Name": raw,
+            "SKU": "",
+            "Qty Required": "",
+            "Size": "",
+            "Material": "",
+            "Category": "",
+            "For Machine": "",
+            "Vendor": "",
+            "Price": "",
+            "Available Stock": "",
+            "stockWarning": "",
+            "suggestedMatch": ""
+        }];
+    }
+}
+
+async function processAudio(filename) {
+    const inventoryContext = await fetchInventoryContext();
+    const audioBase64 = fs.readFileSync(filename).toString('base64');
+
+    const prompt = `
+Translate to English.
+
+The message may contain ONE or MULTIPLE items/parts being requested by factory workers.
+Cross-reference each request against the provided company's Master Inventory List below.
+
+INVENTORY MATCHING RULES:
+1. Match the requested part to the closest matching item in the Master Inventory.
+2. If an inventory match is found (even with spelling variations, informal names, abbreviations, or Hindi/Punjabi terms):
+   - Use the canonical "Part Name" from the inventory.
+   - Populate "SKU" with the inventory's SKU.
+   - Populate "Size", "Material", and "Vendor" with details from the matched inventory item if not explicitly overridden by the worker's message.
+   - Populate "Available Stock", "Price", and "Category" from the matched inventory item.
+   - If the requested quantity (Qty Required) exceeds the matched inventory item's stock (Stock), generate a detailed warning in the "stockWarning" field (e.g., "Requested 5, but only 2 available in stock").
+3. If no match is found:
+   - Perform standard extraction (leave SKU, Available Stock, Price, stockWarning empty).
+   - If there is a similar item in the inventory that might be what they wanted, suggest it in the "suggestedMatch" field (e.g., "Did you mean back gauge pc (SKU: 137)?").
+
+MASTER INVENTORY:
+${inventoryContext}
+
+For EACH item extract:
+- Part Name (canonical matched name or parsed name)
+- SKU (blank if not matched)
+- Qty Required (plain number only, e.g., "1", "20")
+- Size (use detail1/detail2 format from inventory if matched)
+- Material
+- Category (blank if not matched)
+- For Machine
+- Vendor
+- Price (blank if not matched)
+- Available Stock (blank if not matched)
+- stockWarning (blank if no stock issue)
+- suggestedMatch (blank if no suggestion)
+
+Rules:
+- If Vendor is mentioned once for multiple items, apply it to ALL items
+- If "For Machine" is mentioned once for multiple items, apply it to ALL items
+- If Size or Material is not mentioned, leave it empty
+- Qty should be just the number (e.g. "1", "20", "12")
+
+Return ONLY a raw JSON array with NO markdown, NO code fences, NO explanation.
+Example format:
+[
+  {
+    "Part Name": "",
+    "SKU": "",
+    "Qty Required": "",
+    "Size": "",
+    "Material": "",
+    "Category": "",
+    "For Machine": "",
+    "Vendor": "",
+    "Price": "",
+    "Available Stock": "",
+    "stockWarning": "",
+    "suggestedMatch": ""
+  }
+]
+`;
+
+    const raw = await generateWithRetry(prompt, true, audioBase64);
+    if (!raw) {
+        console.error("Gemini failed completely after retries and fallback. Skipping audio request safely.");
+        return [];
+    }
+
+    console.log("RAW GEMINI RESPONSE (audio):", raw);
+
+    const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
+    try {
+        const parsed = JSON.parse(cleaned);
+        return Array.isArray(parsed) ? parsed : [parsed];
+    } catch {
+        console.log("PARSE FAILED. Raw:", raw);
+        return [{
+            "Part Name": raw,
+            "SKU": "",
+            "Qty Required": "",
+            "Size": "",
+            "Material": "",
+            "Category": "",
+            "For Machine": "",
+            "Vendor": "",
+            "Price": "",
+            "Available Stock": "",
+            "stockWarning": "",
+            "suggestedMatch": ""
+        }];
+    }
+}
 
 
 // Serve local voice note audio files as static resources
@@ -688,6 +1029,61 @@ app.get('/api/voice-notes', (req, res) => {
     }
 });
 
+// WhatsApp Integration API Endpoints
+app.get('/api/whatsapp/status', (req, res) => {
+    res.json(whatsappStatus);
+});
+
+app.post('/api/whatsapp/logout', async (req, res) => {
+    try {
+        console.log('[WhatsApp Admin] Logging out WhatsApp client manually...');
+        
+        // Reset in-memory state first
+        whatsappStatus.status = 'disconnected';
+        whatsappStatus.qr = null;
+        whatsappStatus.phone = null;
+        whatsappStatus.pushname = null;
+
+        try {
+            await whatsappClient.logout();
+        } catch (e) {
+            console.log('Client logout failed (could be already logged out):', e.message);
+        }
+
+        // Re-initialize client to generate a new QR code
+        console.log('[WhatsApp Admin] Re-initializing WhatsApp client after logout...');
+        try {
+            await whatsappClient.destroy();
+        } catch (e) {
+            console.log('Client already destroyed or error destroying:', e.message);
+        }
+        await whatsappClient.initialize();
+        
+        res.json({ success: true, message: 'Logged out successfully, re-initializing client' });
+    } catch (err) {
+        console.error('Error logging out WhatsApp client:', err);
+        res.status(500).json({ error: 'Failed to logout client', details: err.message });
+    }
+});
+
+app.post('/api/whatsapp/reconnect', async (req, res) => {
+    try {
+        console.log('[WhatsApp Admin] Re-initializing WhatsApp client manually...');
+        whatsappStatus.status = 'authenticating';
+        whatsappStatus.qr = null;
+        try {
+            await whatsappClient.destroy();
+        } catch (e) {
+            console.log('Client already destroyed or error destroying:', e.message);
+        }
+        await whatsappClient.initialize();
+        res.json({ success: true, message: 'Re-initialization started' });
+    } catch (err) {
+        console.error('Error re-initializing WhatsApp client:', err);
+        res.status(500).json({ error: 'Failed to re-initialize client', details: err.message });
+    }
+});
+
 // Serve frontend in production (compiled dist folder)
 const distPath = path.join(__dirname, '..', 'frontend', 'dist');
 if (fs.existsSync(distPath)) {
@@ -697,10 +1093,219 @@ if (fs.existsSync(distPath)) {
     });
 }
 
+// =============================================================================
+// WhatsApp Bot Event Listeners & Simulation Endpoint
+// =============================================================================
+
+// POST Simulate an incoming WhatsApp message for developer testing without launching a browser
+app.post('/api/test/simulate-message', async (req, res) => {
+    try {
+        const { text, senderName, isAudio, audioFilename } = req.body;
+        const resolvedSender = senderName || 'Mock WhatsApp Tester';
+
+        console.log('--- MOCK MESSAGE SIMULATION TRIGGERED ---');
+        console.log('Sender:', resolvedSender);
+        console.log('Type:', isAudio ? 'Audio Note' : 'Text Message');
+        console.log('Content:', isAudio ? `File: ${audioFilename}` : text);
+        console.log('-----------------------------------------');
+
+        let extractedItems = [];
+
+        if (isAudio) {
+            if (!audioFilename) {
+                return res.status(400).json({ error: 'audioFilename parameter is required for audio mock' });
+            }
+            const filePath = path.join(__dirname, audioFilename);
+            if (!fs.existsSync(filePath)) {
+                return res.status(404).json({ error: `Mock audio file not found at: ${filePath}` });
+            }
+            extractedItems = await processAudio(filePath);
+        } else {
+            if (!text || text.trim() === '') {
+                return res.status(400).json({ error: 'text parameter is required for text mock' });
+            }
+            extractedItems = await processText(text);
+        }
+
+        console.log('Simulation AI parsed results:', JSON.stringify(extractedItems, null, 2));
+
+        const savedResults = [];
+        for (const item of extractedItems) {
+            const dbResult = await savePendingRequest(item, resolvedSender);
+            savedResults.push({
+                item,
+                dbResult
+            });
+        }
+
+        res.json({
+            success: true,
+            sender: resolvedSender,
+            extractedCount: extractedItems.length,
+            results: savedResults
+        });
+    } catch (err) {
+        console.error('Error during message simulation API:', err);
+        res.status(500).json({ error: 'Failed to simulate message processing', details: err.message });
+    }
+});
+
+whatsappClient.on('qr', qr => {
+    console.log("==================================================");
+    console.log("  Scan QR Code below to connect WhatsApp:");
+    console.log("==================================================");
+    qrcode.generate(qr, { small: true });
+
+    whatsappStatus.status = 'qr';
+    whatsappStatus.qr = qr;
+    whatsappStatus.phone = null;
+    whatsappStatus.pushname = null;
+});
+
+whatsappClient.on('authenticated', () => {
+    console.log("==================================================");
+    console.log("  WhatsApp Authenticated! Syncing history...");
+    console.log("==================================================");
+
+    whatsappStatus.status = 'authenticating';
+    whatsappStatus.qr = null;
+});
+
+whatsappClient.on('auth_failure', msg => {
+    console.error("==================================================");
+    console.error("  WhatsApp Authentication Failure:", msg);
+    console.error("==================================================");
+
+    whatsappStatus.status = 'disconnected';
+    whatsappStatus.qr = null;
+    whatsappStatus.phone = null;
+    whatsappStatus.pushname = null;
+});
+
+whatsappClient.on('ready', () => {
+    console.log("==================================================");
+    console.log("  WhatsApp Connected & ready for message events!");
+    console.log("==================================================");
+
+    whatsappStatus.status = 'connected';
+    whatsappStatus.qr = null;
+    whatsappStatus.lastConnected = new Date().toISOString();
+    whatsappStatus.phone = whatsappClient.info?.wid?.user || null;
+    whatsappStatus.pushname = whatsappClient.info?.pushname || null;
+});
+
+whatsappClient.on('disconnected', async (reason) => {
+    console.log("==================================================");
+    console.log("  WhatsApp Disconnected! Reason:", reason);
+    console.log("==================================================");
+
+    whatsappStatus.status = 'disconnected';
+    whatsappStatus.qr = null;
+    whatsappStatus.phone = null;
+    whatsappStatus.pushname = null;
+
+    try {
+        console.log('[WhatsApp Bot] Attempting clean Puppeteer relaunch after disconnect...');
+        await whatsappClient.destroy();
+    } catch (e) {
+        console.error('Error destroying client on disconnect:', e);
+    }
+    try {
+        await whatsappClient.initialize();
+    } catch (e) {
+        console.error('Error re-initializing client on disconnect:', e);
+    }
+});
+
+whatsappClient.on('message_create', async (msg) => {
+    try {
+        const chat = await msg.getChat();
+
+        if (!chat.isGroup || chat.id._serialized !== TARGET_GROUP) {
+            return;
+        }
+
+        const notifyName = msg.notifyName || msg._data?.notifyName || '';
+        let senderName = notifyName;
+
+        if (!senderName) {
+            try {
+                const contact = await msg.getContact();
+                senderName = contact.pushname || contact.name || contact.number || '';
+            } catch (err) {
+                console.error("Failed to get contact JID for sender identity:", err);
+            }
+        }
+
+        if (!senderName) {
+            const jid = msg.author || msg.from || '';
+            senderName = jid.split('@')[0] || 'WhatsApp User';
+        }
+
+        senderName = senderName.toString().trim();
+
+        console.log("\n==================");
+        console.log("Factory Group:", chat.name);
+        console.log("Resolved Sender JID:", senderName);
+        console.log("==================");
+
+        // ==========================
+        // TEXT MESSAGE
+        // ==========================
+        if (msg.body && !msg.hasMedia && msg.body.trim() !== "") {
+            console.log("Text:", msg.body);
+            const items = await processText(msg.body);
+            console.log("\nExtracted:");
+            console.log(items);
+
+            for (const item of items) {
+                console.log(`[WhatsApp Bot] Dispatching text request directly to DB. Sender: "${senderName}"`);
+                await savePendingRequest(item, senderName);
+            }
+        }
+
+        // ==========================
+        // VOICE NOTE
+        // ==========================
+        if (msg.hasMedia) {
+            const media = await msg.downloadMedia();
+            if (media.mimetype && media.mimetype.includes('audio')) {
+                console.log("Voice note received");
+                const filename = `voice_${Date.now()}.ogg`;
+                fs.writeFileSync(filename, Buffer.from(media.data, 'base64'));
+                console.log("Saved audio file:", filename);
+
+                const items = await processAudio(filename);
+                console.log("\nExtracted:");
+                console.log(items);
+
+                for (const item of items) {
+                    console.log(`[WhatsApp Bot] Dispatching audio request directly to DB. Sender: "${senderName}"`);
+                    await savePendingRequest(item, senderName);
+                }
+
+                // Clean up temp audio file
+                try {
+                    fs.unlinkSync(filename);
+                    console.log("Temporary audio file cleaned up:", filename);
+                } catch (cleanupErr) {
+                    console.error("Error cleaning up audio file:", cleanupErr.message);
+                }
+            }
+        }
+    } catch (err) {
+        console.log("\nERROR inside message_create listener:", err);
+    }
+});
+
 // Start Server
 app.listen(PORT, () => {
     console.log(`==================================================`);
     console.log(`  Express Dashboard Backend running on port ${PORT}`);
     console.log(`  API Access: http://localhost:${PORT}/api/requests`);
     console.log(`==================================================`);
+    
+    // Start WhatsApp Bot Singleton in the same process!
+    console.log('Initializing WhatsApp Client singleton...');
+    whatsappClient.initialize();
 });

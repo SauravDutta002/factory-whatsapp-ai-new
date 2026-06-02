@@ -20,7 +20,13 @@ export default function App() {
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
 
-  const currentUserRole = currentUser ? (currentUser.role === 'editor' ? 'reviewer' : 'manager') : null;
+  const currentUserRole = currentUser 
+    ? (currentUser.role === 'editor' 
+        ? 'reviewer' 
+        : currentUser.role === 'approver' 
+          ? 'manager' 
+          : 'observer') 
+    : null;
 
   // View switch and inline table editing states
   const [viewMode, setViewMode] = useState('card'); // 'card' or 'list'
@@ -94,6 +100,35 @@ export default function App() {
     }
   }, [activeTab, selectedInventoryMachine]);
 
+  // WhatsApp Integration States
+  const [whatsappStatus, setWhatsappStatus] = useState({
+    status: 'disconnected',
+    qr: null,
+    phone: null,
+    pushname: null,
+    lastConnected: null
+  });
+
+  const fetchWhatsappStatus = async () => {
+    try {
+      const res = await fetch('/api/whatsapp/status');
+      if (res.ok) {
+        const data = await res.json();
+        setWhatsappStatus(data);
+      }
+    } catch (err) {
+      console.error('Error fetching whatsapp status:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'whatsapp_settings') {
+      fetchWhatsappStatus();
+      const interval = setInterval(fetchWhatsappStatus, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [activeTab]);
+
   // Fetch all lists from backend
   const fetchData = async () => {
     try {
@@ -144,6 +179,17 @@ export default function App() {
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Handle active tab synchronization based on user role
+  useEffect(() => {
+    if (currentUser) {
+      if (currentUser.role === 'manager') {
+        setActiveTab('pending_review');
+      } else {
+        setActiveTab('pending');
+      }
+    }
+  }, [currentUser]);
 
   // Bounds checker for pending slideshow index
   useEffect(() => {
@@ -260,9 +306,24 @@ export default function App() {
   };
 
   // Select current active data list depending on active tab AND user role
-  // Editor (reviewer) sees only pending_review; Approver (manager) sees only reviewed
-  const activeDataList = 
-    activeTab === 'pending' 
+  // Editor (reviewer) sees only pending_review; Approver (manager) sees only reviewed; Manager (observer) has specific tabs
+  const activeDataList = (() => {
+    if (currentUserRole === 'observer') {
+      if (activeTab === 'pending_review') {
+        return pendingRequests.filter(r => !r.status || r.status === 'pending_review');
+      }
+      if (activeTab === 'reviewed') {
+        return pendingRequests.filter(r => r.status === 'reviewed');
+      }
+      if (activeTab === 'approved_queue') {
+        return pendingRequests.filter(r => r.status === 'approved');
+      }
+      if (activeTab === 'approved') {
+        return approvedRequests;
+      }
+      return [];
+    }
+    return activeTab === 'pending' 
       ? pendingRequests.filter(r => {
           if (currentUserRole === 'reviewer') {
             return !r.status || r.status === 'pending_review';
@@ -273,6 +334,7 @@ export default function App() {
       : activeTab === 'receiving'
         ? pendingRequests.filter(r => r.status === 'approved')
         : approvedRequests;
+  })();
 
   // Filter the active list client-side
   const filteredRequests = activeDataList.filter((item) => {
@@ -425,95 +487,253 @@ export default function App() {
         
         <div className="sidebar-section-label">General</div>
         <nav className="sidebar-menu">
-          {/* Pending Approvals Tab Button */}
-          <button 
-            className={`sidebar-menu-item ${activeTab === 'pending' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveTab('pending');
-              handleClearFilters();
-            }}
-            style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none' }}
-          >
-            <svg className="sidebar-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-            </svg>
-            <span style={{ flexGrow: 1 }}>Pending Demands</span>
-            {pendingRequests.filter(r => currentUserRole === 'reviewer' ? (!r.status || r.status === 'pending_review') : r.status === 'reviewed').length > 0 && (
-              <span 
-                style={{
-                  backgroundColor: '#ef4444',
-                  color: '#ffffff',
-                  fontSize: '0.7rem',
-                  fontWeight: '700',
-                  padding: '0.15rem 0.45rem',
-                  borderRadius: '9999px',
-                  marginLeft: 'auto'
+          {currentUserRole === 'observer' ? (
+            <>
+              {/* Manager Tab: New Worker Demands */}
+              <button 
+                className={`sidebar-menu-item ${activeTab === 'pending_review' ? 'active' : ''}`}
+                onClick={() => {
+                  setActiveTab('pending_review');
+                  handleClearFilters();
                 }}
+                style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none' }}
               >
-                {pendingRequests.filter(r => currentUserRole === 'reviewer' ? (!r.status || r.status === 'pending_review') : r.status === 'reviewed').length}
-              </span>
-            )}
-          </button>
+                <svg className="sidebar-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                </svg>
+                <span style={{ flexGrow: 1 }}>New Worker Demands</span>
+                {pendingRequests.filter(r => !r.status || r.status === 'pending_review').length > 0 && (
+                  <span 
+                    style={{
+                      backgroundColor: '#ef4444',
+                      color: '#ffffff',
+                      fontSize: '0.7rem',
+                      fontWeight: '700',
+                      padding: '0.15rem 0.45rem',
+                      borderRadius: '9999px',
+                      marginLeft: 'auto'
+                    }}
+                  >
+                    {pendingRequests.filter(r => !r.status || r.status === 'pending_review').length}
+                  </span>
+                )}
+              </button>
 
-          {/* Receiving Queue Tab Button */}
-          <button 
-            className={`sidebar-menu-item ${activeTab === 'receiving' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveTab('receiving');
-              handleClearFilters();
-            }}
-            style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none' }}
-          >
-            <svg className="sidebar-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-            </svg>
-            <span style={{ flexGrow: 1 }}>Receiving Queue</span>
-            {pendingRequests.filter(r => r.status === 'approved').length > 0 && (
-              <span 
-                style={{
-                  backgroundColor: 'var(--accent-blue-text)',
-                  color: '#ffffff',
-                  fontSize: '0.7rem',
-                  fontWeight: '700',
-                  padding: '0.15rem 0.45rem',
-                  borderRadius: '9999px',
-                  marginLeft: 'auto'
+              {/* Manager Tab: Pending Approval */}
+              <button 
+                className={`sidebar-menu-item ${activeTab === 'reviewed' ? 'active' : ''}`}
+                onClick={() => {
+                  setActiveTab('reviewed');
+                  handleClearFilters();
                 }}
+                style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none' }}
               >
-                {pendingRequests.filter(r => r.status === 'approved').length}
-              </span>
-            )}
-          </button>
+                <svg className="sidebar-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span style={{ flexGrow: 1 }}>Pending Approval</span>
+                {pendingRequests.filter(r => r.status === 'reviewed').length > 0 && (
+                  <span 
+                    style={{
+                      backgroundColor: '#f59e0b',
+                      color: '#ffffff',
+                      fontSize: '0.7rem',
+                      fontWeight: '700',
+                      padding: '0.15rem 0.45rem',
+                      borderRadius: '9999px',
+                      marginLeft: 'auto'
+                    }}
+                  >
+                    {pendingRequests.filter(r => r.status === 'reviewed').length}
+                  </span>
+                )}
+              </button>
 
-          {/* Approved History Tab Button */}
-          <button 
-            className={`sidebar-menu-item ${activeTab === 'approved' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveTab('approved');
-              handleClearFilters();
-            }}
-            style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none' }}
-          >
-            <svg className="sidebar-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            Approved History
-          </button>
+              {/* Manager Tab: Approved Queue */}
+              <button 
+                className={`sidebar-menu-item ${activeTab === 'approved_queue' ? 'active' : ''}`}
+                onClick={() => {
+                  setActiveTab('approved_queue');
+                  handleClearFilters();
+                }}
+                style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none' }}
+              >
+                <svg className="sidebar-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+                <span style={{ flexGrow: 1 }}>Approved Queue</span>
+                {pendingRequests.filter(r => r.status === 'approved').length > 0 && (
+                  <span 
+                    style={{
+                      backgroundColor: 'var(--accent-blue-text)',
+                      color: '#ffffff',
+                      fontSize: '0.7rem',
+                      fontWeight: '700',
+                      padding: '0.15rem 0.45rem',
+                      borderRadius: '9999px',
+                      marginLeft: 'auto'
+                    }}
+                  >
+                    {pendingRequests.filter(r => r.status === 'approved').length}
+                  </span>
+                )}
+              </button>
 
-          {/* Inventory Catalog Tab Button */}
-          <button 
-            className={`sidebar-menu-item ${activeTab === 'inventory' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveTab('inventory');
-              handleClearFilters();
-            }}
-            style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none' }}
-          >
-            <svg className="sidebar-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-            </svg>
-            Inventory Catalog
-          </button>
+              {/* Manager Tab: Approved History */}
+              <button 
+                className={`sidebar-menu-item ${activeTab === 'approved' ? 'active' : ''}`}
+                onClick={() => {
+                  setActiveTab('approved');
+                  handleClearFilters();
+                }}
+                style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none' }}
+              >
+                <svg className="sidebar-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+                Approved History
+              </button>
+
+              {/* Manager Tab: Inventory Catalog */}
+              <button 
+                className={`sidebar-menu-item ${activeTab === 'inventory' ? 'active' : ''}`}
+                onClick={() => {
+                  setActiveTab('inventory');
+                  handleClearFilters();
+                }}
+                style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none' }}
+              >
+                <svg className="sidebar-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                </svg>
+                Inventory Catalog
+              </button>
+
+              {/* Manager Tab: WhatsApp Integration */}
+              <button 
+                className={`sidebar-menu-item ${activeTab === 'whatsapp_settings' ? 'active' : ''}`}
+                onClick={() => {
+                  setActiveTab('whatsapp_settings');
+                  handleClearFilters();
+                }}
+                style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none' }}
+              >
+                <svg className="sidebar-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                </svg>
+                WhatsApp Integration
+              </button>
+            </>
+          ) : (
+            <>
+              {/* Pending Approvals Tab Button */}
+              <button 
+                className={`sidebar-menu-item ${activeTab === 'pending' ? 'active' : ''}`}
+                onClick={() => {
+                  setActiveTab('pending');
+                  handleClearFilters();
+                }}
+                style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none' }}
+              >
+                <svg className="sidebar-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                </svg>
+                <span style={{ flexGrow: 1 }}>Pending Demands</span>
+                {pendingRequests.filter(r => currentUserRole === 'reviewer' ? (!r.status || r.status === 'pending_review') : r.status === 'reviewed').length > 0 && (
+                  <span 
+                    style={{
+                      backgroundColor: '#ef4444',
+                      color: '#ffffff',
+                      fontSize: '0.7rem',
+                      fontWeight: '700',
+                      padding: '0.15rem 0.45rem',
+                      borderRadius: '9999px',
+                      marginLeft: 'auto'
+                    }}
+                  >
+                    {pendingRequests.filter(r => currentUserRole === 'reviewer' ? (!r.status || r.status === 'pending_review') : r.status === 'reviewed').length}
+                  </span>
+                )}
+              </button>
+
+              {/* Receiving Queue Tab Button */}
+              <button 
+                className={`sidebar-menu-item ${activeTab === 'receiving' ? 'active' : ''}`}
+                onClick={() => {
+                  setActiveTab('receiving');
+                  handleClearFilters();
+                }}
+                style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none' }}
+              >
+                <svg className="sidebar-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+                <span style={{ flexGrow: 1 }}>Receiving Queue</span>
+                {pendingRequests.filter(r => r.status === 'approved').length > 0 && (
+                  <span 
+                    style={{
+                      backgroundColor: 'var(--accent-blue-text)',
+                      color: '#ffffff',
+                      fontSize: '0.7rem',
+                      fontWeight: '700',
+                      padding: '0.15rem 0.45rem',
+                      borderRadius: '9999px',
+                      marginLeft: 'auto'
+                    }}
+                  >
+                    {pendingRequests.filter(r => r.status === 'approved').length}
+                  </span>
+                )}
+              </button>
+
+              {/* Approved History Tab Button */}
+              <button 
+                className={`sidebar-menu-item ${activeTab === 'approved' ? 'active' : ''}`}
+                onClick={() => {
+                  setActiveTab('approved');
+                  handleClearFilters();
+                }}
+                style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none' }}
+              >
+                <svg className="sidebar-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Approved History
+              </button>
+
+              {/* Inventory Catalog Tab Button */}
+              <button 
+                className={`sidebar-menu-item ${activeTab === 'inventory' ? 'active' : ''}`}
+                onClick={() => {
+                  setActiveTab('inventory');
+                  handleClearFilters();
+                }}
+                style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none' }}
+              >
+                <svg className="sidebar-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                </svg>
+                Inventory Catalog
+              </button>
+
+              {/* WhatsApp Integration Tab Button */}
+              {currentUserRole === 'manager' && (
+                <button 
+                  className={`sidebar-menu-item ${activeTab === 'whatsapp_settings' ? 'active' : ''}`}
+                  onClick={() => {
+                    setActiveTab('whatsapp_settings');
+                    handleClearFilters();
+                  }}
+                  style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none' }}
+                >
+                  <svg className="sidebar-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                  </svg>
+                  WhatsApp Integration
+                </button>
+              )}
+            </>
+          )}
         </nav>
 
         {/* Audio Logs Sidebar Attachment */}
@@ -555,7 +775,7 @@ export default function App() {
             Sign Out
           </button>
         </div>
-      </aside>
+</aside>
 
       {/* Main Content Workspace */}
       <main className="main-workspace">
@@ -563,31 +783,43 @@ export default function App() {
         <header className="header-section">
           <div className="header-title-wrapper">
             <h1>
-              {activeTab === 'pending' 
-                ? 'Pending Approvals' 
-                : activeTab === 'approved' 
-                  ? 'Approved Requests' 
-                  : 'Inventory Catalog'}
+              {activeTab === 'pending_review' 
+                ? 'New Worker Demands' 
+                : activeTab === 'reviewed' 
+                  ? 'Pending Approval' 
+                  : activeTab === 'approved_queue'
+                    ? 'Approved Queue'
+                    : activeTab === 'pending' 
+                      ? 'Pending Demands' 
+                      : activeTab === 'approved' 
+                        ? 'Approved Requests' 
+                        : activeTab === 'receiving'
+                          ? 'Receiving Queue'
+                          : activeTab === 'whatsapp_settings'
+                            ? 'WhatsApp Integration'
+                            : 'Inventory Catalog'}
             </h1>
           </div>
           
           <div className="header-controls">
 
             {/* Minimalist Search Bar */}
-            <div className="search-input-wrapper">
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-              <input
-                type="text"
-                placeholder={activeTab === 'inventory' ? 'Search part name, category, SKU...' : 'Search parts, size, machine...'}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
+            {activeTab !== 'whatsapp_settings' && (
+              <div className="search-input-wrapper">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input
+                  type="text"
+                  placeholder={activeTab === 'inventory' ? 'Search part name, category, SKU...' : 'Search parts, size, machine...'}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+            )}
             
             {/* Layout Switcher (Card / List Toggle) */}
-            {true && (
+            {activeTab !== 'whatsapp_settings' && (
               <div style={{ 
                 display: 'flex', 
                 backgroundColor: '#f1f5f9', 
@@ -649,26 +881,28 @@ export default function App() {
             )}
 
             {/* Refresh / Sync Button */}
-            <button 
-              className={`btn-refresh ${refreshing || inventoryLoading ? 'spinning' : ''}`} 
-              onClick={activeTab === 'inventory' ? fetchInventory : fetchData}
-              disabled={refreshing || inventoryLoading}
-            >
-              <svg 
-                width="16" 
-                height="16" 
-                fill="none" 
-                viewBox="0 0 24 24" 
-                stroke="currentColor" 
-                strokeWidth={2.5}
-                style={{ animation: (refreshing || inventoryLoading) ? 'spin 1s linear infinite' : 'none' }}
+            {activeTab !== 'whatsapp_settings' && (
+              <button 
+                className={`btn-refresh ${refreshing || inventoryLoading ? 'spinning' : ''}`} 
+                onClick={activeTab === 'inventory' ? fetchInventory : fetchData}
+                disabled={refreshing || inventoryLoading}
               >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18" />
-              </svg>
-              {activeTab === 'inventory' 
-                ? (inventoryLoading ? 'Loading...' : 'Refresh Inventory') 
-                : (refreshing ? 'Syncing...' : 'Sync Sheet')}
-            </button>
+                <svg 
+                  width="16" 
+                  height="16" 
+                  fill="none" 
+                  viewBox="0 0 24 24" 
+                  stroke="currentColor" 
+                  strokeWidth={2.5}
+                  style={{ animation: (refreshing || inventoryLoading) ? 'spin 1s linear infinite' : 'none' }}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18" />
+                </svg>
+                {activeTab === 'inventory' 
+                  ? (inventoryLoading ? 'Loading...' : 'Refresh Inventory') 
+                  : (refreshing ? 'Syncing...' : 'Sync Sheet')}
+              </button>
+            )}
           </div>
         </header>
 
@@ -901,10 +1135,190 @@ export default function App() {
               </div>
             )}
           </div>
+        ) : activeTab === 'whatsapp_settings' ? (
+          /* WHATSAPP INTEGRATION SETTINGS VIEW */
+          (currentUserRole !== 'manager' && currentUserRole !== 'observer') ? (
+            <div className="empty-state">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <h3>Access Denied</h3>
+              <p>You do not have administrative privileges to access WhatsApp Settings.</p>
+            </div>
+          ) : (
+            <div className="whatsapp-settings-container">
+              <div className="whatsapp-settings-card">
+                <div className="whatsapp-settings-header">
+                  <div>
+                    <h2>WhatsApp Integration Control Panel</h2>
+                    <p>Monitor status, scan pairing QR codes, and manage active sessions entirely from the dashboard.</p>
+                  </div>
+                  <div>
+                    {/* Status Badge */}
+                    <span 
+                      className="whatsapp-status-badge"
+                      style={{
+                        backgroundColor: 
+                          whatsappStatus.status === 'connected' ? 'var(--accent-green-bg)' :
+                          whatsappStatus.status === 'authenticating' ? 'var(--accent-blue-bg)' :
+                          whatsappStatus.status === 'qr' ? 'var(--accent-amber-bg)' : 'var(--accent-rose-bg)',
+                        color:
+                          whatsappStatus.status === 'connected' ? 'var(--accent-green-text)' :
+                          whatsappStatus.status === 'authenticating' ? 'var(--accent-blue-text)' :
+                          whatsappStatus.status === 'qr' ? 'var(--accent-amber-text)' : 'var(--accent-rose-text)'
+                      }}
+                    >
+                      <span className={`status-dot status-dot-${whatsappStatus.status}`}></span>
+                      {whatsappStatus.status === 'connected' ? 'Connected' :
+                       whatsappStatus.status === 'authenticating' ? 'Authenticating...' :
+                       whatsappStatus.status === 'qr' ? 'Awaiting Scan' : 'Disconnected'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="whatsapp-settings-body">
+                  {/* Account detail grid if connected */}
+                  {whatsappStatus.status === 'connected' && (
+                    <div className="whatsapp-details-grid">
+                      <div className="whatsapp-detail-item">
+                        <span className="whatsapp-detail-label">Linked Number</span>
+                        <span className="whatsapp-detail-value">+{whatsappStatus.phone || 'N/A'}</span>
+                      </div>
+                      <div className="whatsapp-detail-item">
+                        <span className="whatsapp-detail-label">Display Name</span>
+                        <span className="whatsapp-detail-value">{whatsappStatus.pushname || 'WhatsApp Client'}</span>
+                      </div>
+                      <div className="whatsapp-detail-item" style={{ gridColumn: 'span 2' }}>
+                        <span className="whatsapp-detail-label">Last Connected Time</span>
+                        <span className="whatsapp-detail-value">
+                          {whatsappStatus.lastConnected 
+                            ? new Date(whatsappStatus.lastConnected).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) 
+                            : 'N/A'}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* QR code scanner section if awaiting scan */}
+                  {whatsappStatus.status === 'qr' && whatsappStatus.qr && (
+                    <div className="whatsapp-qr-section">
+                      <div className="whatsapp-qr-frame">
+                        <img 
+                          src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(whatsappStatus.qr)}`} 
+                          alt="WhatsApp pairing QR code"
+                          className="whatsapp-qr-image"
+                        />
+                      </div>
+
+                      <div className="whatsapp-instructions">
+                        <h3>Scan to reconnect WhatsApp</h3>
+                        <ol className="whatsapp-steps">
+                          <li className="whatsapp-step-item">
+                            <span className="whatsapp-step-num">1</span>
+                            <span>Open <strong>WhatsApp</strong> on your mobile phone.</span>
+                          </li>
+                          <li className="whatsapp-step-item">
+                            <span className="whatsapp-step-num">2</span>
+                            <span>Tap <strong>Menu</strong> (three vertical dots on Android) or <strong>Settings</strong> (gear icon on iOS).</span>
+                          </li>
+                          <li className="whatsapp-step-item">
+                            <span className="whatsapp-step-num">3</span>
+                            <span>Select <strong>Linked Devices</strong>, and then tap <strong>Link a Device</strong>.</span>
+                          </li>
+                          <li className="whatsapp-step-item">
+                            <span className="whatsapp-step-num">4</span>
+                            <span>Point your phone camera to this screen to capture and scan the QR code.</span>
+                          </li>
+                        </ol>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Loading placeholder when initializing or authenticating (checking session) */}
+                  {(whatsappStatus.status === 'disconnected' || whatsappStatus.status === 'authenticating') && (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '3.5rem 1rem', gap: '1.25rem' }}>
+                      <div className="spinner"></div>
+                      <div style={{ textAlign: 'center' }}>
+                        <p style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>
+                          {whatsappStatus.status === 'authenticating' ? 'Connecting & Syncing History...' : 'Initializing WhatsApp Client...'}
+                        </p>
+                        <p style={{ fontSize: '0.825rem', color: 'var(--text-secondary)' }}>
+                          {whatsappStatus.status === 'authenticating' ? 'Verifying linked session credentials and checking device connection...' : 'Starting backend browser instance in sandbox mode...'}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Actions row for manual overrides */}
+                  <div className="whatsapp-actions-row">
+                    {whatsappStatus.status === 'connected' && (
+                      <button 
+                        className="btn-whatsapp-action btn-whatsapp-action-danger"
+                        onClick={async () => {
+                          if (window.confirm('Are you sure you want to disconnect WhatsApp? This will log out the active session.')) {
+                            try {
+                              setRefreshing(true);
+                              const res = await fetch('/api/whatsapp/logout', { method: 'POST' });
+                              if (res.ok) {
+                                await fetchWhatsappStatus();
+                                alert('Logged out successfully. Relink to start receiving messages.');
+                              } else {
+                                alert('Failed to log out.');
+                              }
+                            } catch (err) {
+                              console.error('Logout error:', err);
+                              alert('Connection error occurred during logout.');
+                            } finally {
+                              setRefreshing(false);
+                            }
+                          }
+                        }}
+                        disabled={refreshing}
+                      >
+                        <svg style={{ width: '16px', height: '16px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                        </svg>
+                        Disconnect Session
+                      </button>
+                    )}
+
+                    {(whatsappStatus.status === 'disconnected' || whatsappStatus.status === 'qr') && (
+                      <button 
+                        className="btn-whatsapp-action btn-whatsapp-action-primary"
+                        onClick={async () => {
+                          try {
+                            setRefreshing(true);
+                            const res = await fetch('/api/whatsapp/reconnect', { method: 'POST' });
+                            if (res.ok) {
+                              await fetchWhatsappStatus();
+                              alert('Client hard-relaunch triggered. Please wait a few seconds for the QR code to regenerate.');
+                            } else {
+                              alert('Failed to trigger hard-relaunch.');
+                            }
+                          } catch (err) {
+                            console.error('Reconnect error:', err);
+                            alert('Connection error occurred during relaunch.');
+                          } finally {
+                            setRefreshing(false);
+                          }
+                        }}
+                        disabled={refreshing}
+                      >
+                        <svg style={{ width: '16px', height: '16px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18" />
+                        </svg>
+                        Relaunch & Sync Client
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )
         ) : (
           <>
             {/* KPI Summary Panels */}
-            {currentUser && currentUser.role === 'approver' ? (
+            {currentUser && (currentUser.role === 'approver' || currentUser.role === 'manager') ? (
               <ApproverMetrics
                 newWorkerDemands={kpiData.newWorkerDemands}
                 pendingApproval={kpiData.pendingApproval}
@@ -967,7 +1381,7 @@ export default function App() {
                       <th style={{ padding: '1rem 1.25rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Requested By</th>
                       <th style={{ padding: '1rem 1.25rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Timestamp</th>
                       <th style={{ padding: '1rem 1.25rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Rate</th>
-                      {(activeTab === 'pending' || activeTab === 'receiving') && (
+                      {(activeTab === 'pending' || activeTab === 'receiving') && currentUserRole !== 'observer' && (
                         <th style={{ padding: '1rem 1.25rem', fontWeight: 600, color: 'var(--text-secondary)', textAlign: 'right' }}>Actions</th>
                       )}
                     </tr>
@@ -1297,7 +1711,7 @@ export default function App() {
                           </td>
 
                           {/* Actions Column (For Pending Active Demands & Receiving Queue) */}
-                          {(activeTab === 'pending' || activeTab === 'receiving') && (
+                          {(activeTab === 'pending' || activeTab === 'receiving') && currentUserRole !== 'observer' && (
                             <td style={{ padding: '1rem 1.25rem', textAlign: 'right' }}>
                               {activeTab === 'receiving' ? (
                                 <button 

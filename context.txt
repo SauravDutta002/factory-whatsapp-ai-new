@@ -239,12 +239,17 @@ Visual Theme & Layout:
   * *Pending Approval* (`status = 'reviewed'`)
   * *Approved but Not Received* (`status = 'approved'`)
 
-Worker → Editor → Approver Workflow:
-------------------------------------
-- The dashboard enforces a strict sequential role hierarchy based on bcrypt-authenticated profiles (`users.json`):
-  * **Editor** (Reviewer): Sees only incoming worker requests (`status = 'pending_review'`). Actions include Edit, Forward for Approval, and Reject.
-  * **Approver** (Manager): Sees only requests reviewed and forwarded by the Editor (`status = 'reviewed'`). Actions include Edit, Approve, and Reject.
-- Display mode (Card View vs List View) does not affect actions or permissions; identical action blocks are accessible in both views.
+Worker → Editor → Approver Workflow with Read-Only Manager Monitoring:
+----------------------------------------------------------------------
+- The dashboard enforces a strict role hierarchy and read-only monitoring views based on bcrypt-authenticated profiles (`users.json`):
+  * **Editor** (internal role: `reviewer`): Sees only incoming worker requests (`status = 'pending_review'`). Actions include Edit, Forward for Approval, and Reject.
+  * **Approver** (internal role: `manager`): Sees only requests reviewed and forwarded by the Editor (`status = 'reviewed'`). Actions include Edit, Approve, and Reject.
+  * **Manager** (internal role: `observer`): A third read-only monitoring role that is not part of the active approval workflow. The Manager gets full visibility into incoming demands, pending approvals, receiving queues, and the master inventory catalog.
+- **Strict Read-Only Restrictions for Manager**:
+  * Actions column header and action buttons are entirely hidden in List View.
+  * "Edit" button and bottom "Admin Verification Panel" (containing Forward/Reject/Approve/Receive controls) are completely hidden on the card detail view.
+  * All views and lists are fully read-only, preventing any state-modifying actions while preserving active metrics.
+- Display mode (Card View vs List View) does not affect actions or permissions; identical action blocks are accessible in both views for Editor/Approver roles.
 
 Procurement-Flexible Searchable Autocomplete:
 ---------------------------------------------

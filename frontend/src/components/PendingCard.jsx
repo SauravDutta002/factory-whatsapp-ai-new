@@ -441,20 +441,22 @@ export default function PendingCard({ item, voiceNotes = [], currentUserRole, on
           <>
             <h2 className="demand-part-name" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               {formData.partName || <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Part Name Unspecified</span>}
-              <button 
-                onClick={() => setIsEditing(true)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'var(--accent-blue-text)',
-                  fontSize: '0.75rem',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  padding: '0.1rem 0.4rem'
-                }}
-              >
-                Edit
-              </button>
+              {currentUserRole !== 'observer' && (
+                <button 
+                  onClick={() => setIsEditing(true)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--accent-blue-text)',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    padding: '0.1rem 0.4rem'
+                  }}
+                >
+                  Edit
+                </button>
+              )}
             </h2>
             
             <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.4rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
@@ -638,30 +640,12 @@ export default function PendingCard({ item, voiceNotes = [], currentUserRole, on
             )}
 
             {/* Admin Verification Panel */}
-            <div style={{ display: 'flex', gap: '0.75rem', marginTop: 'auto' }}>
-              {activeTab === 'receiving' ? (
-                /* RECEIVING ACTIONS */
-                <button 
-                  onClick={() => onReceive(item.id)}
-                  className="btn-refresh"
-                  style={{
-                    flexGrow: 1,
-                    justifyContent: 'center',
-                    backgroundColor: 'var(--accent-green-bg)',
-                    borderColor: '#bbf7d0',
-                    color: 'var(--accent-green-text)',
-                    fontWeight: 600,
-                    fontSize: '0.85rem',
-                    padding: '0.55rem'
-                  }}
-                >
-                  Mark as Received
-                </button>
-              ) : currentUserRole === 'reviewer' ? (
-                /* REVIEWER ACTIONS */
-                <>
+            {currentUserRole !== 'observer' && (
+              <div style={{ display: 'flex', gap: '0.75rem', marginTop: 'auto' }}>
+                {activeTab === 'receiving' ? (
+                  /* RECEIVING ACTIONS */
                   <button 
-                    onClick={() => onForward(item.id, formData)}
+                    onClick={() => onReceive(item.id)}
                     className="btn-refresh"
                     style={{
                       flexGrow: 1,
@@ -674,65 +658,85 @@ export default function PendingCard({ item, voiceNotes = [], currentUserRole, on
                       padding: '0.55rem'
                     }}
                   >
-                    Forward for Approval
+                    Mark as Received
                   </button>
-                  
-                  <button 
-                    onClick={() => onReject(item.id)}
-                    className="btn-refresh"
-                    style={{
-                      flexGrow: 1,
-                      justifyContent: 'center',
-                      backgroundColor: 'var(--accent-rose-bg)',
-                      borderColor: '#fecaca',
-                      color: 'var(--accent-rose-text)',
-                      fontWeight: 600,
-                      fontSize: '0.85rem',
-                      padding: '0.55rem'
-                    }}
-                  >
-                    Reject
-                  </button>
-                </>
-              ) : (
-                /* MANAGER ACTIONS */
-                <>
-                  <button 
-                    onClick={() => onApprove(item.id, formData)}
-                    className="btn-refresh"
-                    style={{
-                      flexGrow: 1,
-                      justifyContent: 'center',
-                      backgroundColor: 'var(--accent-green-bg)',
-                      borderColor: '#bbf7d0',
-                      color: 'var(--accent-green-text)',
-                      fontWeight: 600,
-                      fontSize: '0.85rem',
-                      padding: '0.55rem'
-                    }}
-                  >
-                    Approve
-                  </button>
-                  
-                  <button 
-                    onClick={() => onReject(item.id)}
-                    className="btn-refresh"
-                    style={{
-                      flexGrow: 1,
-                      justifyContent: 'center',
-                      backgroundColor: 'var(--accent-rose-bg)',
-                      borderColor: '#fecaca',
-                      color: 'var(--accent-rose-text)',
-                      fontWeight: 600,
-                      fontSize: '0.85rem',
-                      padding: '0.55rem'
-                    }}
-                  >
-                    Reject
-                  </button>
-                </>
-              )}
-            </div>
+                ) : currentUserRole === 'reviewer' ? (
+                  /* REVIEWER ACTIONS */
+                  <>
+                    <button 
+                      onClick={() => onForward(item.id, formData)}
+                      className="btn-refresh"
+                      style={{
+                        flexGrow: 1,
+                        justifyContent: 'center',
+                        backgroundColor: 'var(--accent-green-bg)',
+                        borderColor: '#bbf7d0',
+                        color: 'var(--accent-green-text)',
+                        fontWeight: 600,
+                        fontSize: '0.85rem',
+                        padding: '0.55rem'
+                      }}
+                    >
+                      Forward for Approval
+                    </button>
+                    
+                    <button 
+                      onClick={() => onReject(item.id)}
+                      className="btn-refresh"
+                      style={{
+                        flexGrow: 1,
+                        justifyContent: 'center',
+                        backgroundColor: 'var(--accent-rose-bg)',
+                        borderColor: '#fecaca',
+                        color: 'var(--accent-rose-text)',
+                        fontWeight: 600,
+                        fontSize: '0.85rem',
+                        padding: '0.55rem'
+                      }}
+                    >
+                      Reject
+                    </button>
+                  </>
+                ) : (
+                  /* MANAGER ACTIONS */
+                  <>
+                    <button 
+                      onClick={() => onApprove(item.id, formData)}
+                      className="btn-refresh"
+                      style={{
+                        flexGrow: 1,
+                        justifyContent: 'center',
+                        backgroundColor: 'var(--accent-green-bg)',
+                        borderColor: '#bbf7d0',
+                        color: 'var(--accent-green-text)',
+                        fontWeight: 600,
+                        fontSize: '0.85rem',
+                        padding: '0.55rem'
+                      }}
+                    >
+                      Approve
+                    </button>
+                    
+                    <button 
+                      onClick={() => onReject(item.id)}
+                      className="btn-refresh"
+                      style={{
+                        flexGrow: 1,
+                        justifyContent: 'center',
+                        backgroundColor: 'var(--accent-rose-bg)',
+                        borderColor: '#fecaca',
+                        color: 'var(--accent-rose-text)',
+                        fontWeight: 600,
+                        fontSize: '0.85rem',
+                        padding: '0.55rem'
+                      }}
+                    >
+                      Reject
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
