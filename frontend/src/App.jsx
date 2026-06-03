@@ -1618,6 +1618,7 @@ export default function App() {
                 overflowX: 'auto',
                 marginTop: '1rem'
               }}>
+                
                 <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontFamily: 'var(--font-sans)', fontSize: '0.9rem' }}>
                   <thead>
                     <tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid var(--border-medium)' }}>
