@@ -73,6 +73,11 @@ const RECONNECT_COOLDOWN_MS = 15000;
 let authTimeoutHandle = null;
 const AUTH_TIMEOUT_MS = 120000; // 2 minutes max in authenticating state
 
+// Gemini API Rate Limit Tracker (15 RPM Free Tier limit)
+let geminiRequestTimestamps = [];
+let lastBroadcastLimit = -1;
+const GEMINI_RPM_LIMIT = 15;
+
 function clearAuthTimeout() {
     if (authTimeoutHandle) {
         clearTimeout(authTimeoutHandle);
@@ -137,8 +142,26 @@ global.io = io; // Expose globally to broadcast from anywhere
 
 io.on('connection', (socket) => {
     console.log('[Socket.IO] New dashboard client connected:', socket.id);
+    
+    // Immediately send current API limits on new connection
+    const currentCount = geminiRequestTimestamps.length;
+    socket.emit('api_limit_update', { count: currentCount, limit: GEMINI_RPM_LIMIT });
+
     socket.on('disconnect', () => console.log('[Socket.IO] Client disconnected:', socket.id));
 });
+
+// Periodic broadcast of API limit decay
+setInterval(() => {
+    const now = Date.now();
+    geminiRequestTimestamps = geminiRequestTimestamps.filter(t => now - t < 60000);
+    const currentCount = geminiRequestTimestamps.length;
+    
+    // Only broadcast if the count changed (e.g. decayed)
+    if (currentCount !== lastBroadcastLimit && global.io) {
+        global.io.emit('api_limit_update', { count: currentCount, limit: GEMINI_RPM_LIMIT });
+        lastBroadcastLimit = currentCount;
+    }
+}, 2000);
 
 app.use(cors());
 app.use(express.json());
@@ -237,6 +260,13 @@ async function generateWithRetry(prompt, isAudio = false, audioBase64 = null) {
 
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
             try {
+                // Track this request for RPM limiting
+                geminiRequestTimestamps.push(Date.now());
+                if (global.io) {
+                    lastBroadcastLimit = geminiRequestTimestamps.length;
+                    global.io.emit('api_limit_update', { count: lastBroadcastLimit, limit: GEMINI_RPM_LIMIT });
+                }
+
                 let result;
                 if (isAudio) {
                     result = await model.generateContent([
@@ -276,6 +306,35 @@ async function generateWithRetry(prompt, isAudio = false, audioBase64 = null) {
         }
     }
     return null; // All retries and models failed
+}
+
+function extractJsonFromResponse(raw) {
+    if (!raw) return null;
+    
+    const startIdx = raw.indexOf('[');
+    const endIdx = raw.lastIndexOf(']');
+    
+    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+        try {
+            const parsed = JSON.parse(raw.substring(startIdx, endIdx + 1));
+            return Array.isArray(parsed) ? parsed : [parsed];
+        } catch (e) {
+            console.error("Failed to parse extracted JSON array:", e.message);
+        }
+    }
+    
+    const startObjIdx = raw.indexOf('{');
+    const endObjIdx = raw.lastIndexOf('}');
+    if (startObjIdx !== -1 && endObjIdx !== -1 && endObjIdx > startObjIdx) {
+        try {
+            const parsed = JSON.parse(raw.substring(startObjIdx, endObjIdx + 1));
+            return [parsed];
+        } catch (e) {
+            console.error("Failed to parse extracted JSON object:", e.message);
+        }
+    }
+    
+    return null;
 }
 
 async function processText(text) {
@@ -358,13 +417,12 @@ ${text}
 
     console.log("RAW GEMINI RESPONSE (text):", raw);
 
-    const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    const parsed = extractJsonFromResponse(raw);
+    if (parsed) {
+        return parsed;
+    }
 
-    try {
-        const parsed = JSON.parse(cleaned);
-        return Array.isArray(parsed) ? parsed : [parsed];
-    } catch {
-        console.log("PARSE FAILED. Raw:", raw);
+    console.log("PARSE FAILED. Raw:", raw);
         return [{
             "Part Name": raw,
             "SKU": "",
@@ -379,7 +437,6 @@ ${text}
             "stockWarning": "",
             "suggestedMatch": ""
         }];
-    }
 }
 
 async function processAudio(filename) {
@@ -460,13 +517,12 @@ Example format:
 
     console.log("RAW GEMINI RESPONSE (audio):", raw);
 
-    const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    const parsed = extractJsonFromResponse(raw);
+    if (parsed) {
+        return parsed;
+    }
 
-    try {
-        const parsed = JSON.parse(cleaned);
-        return Array.isArray(parsed) ? parsed : [parsed];
-    } catch {
-        console.log("PARSE FAILED. Raw:", raw);
+    console.log("PARSE FAILED. Raw:", raw);
         return [{
             "Part Name": raw,
             "SKU": "",
@@ -481,7 +537,6 @@ Example format:
             "stockWarning": "",
             "suggestedMatch": ""
         }];
-    }
 }
 
 
@@ -1533,11 +1588,10 @@ whatsappClient.on('auth_failure', async (msg) => {
     whatsappStatus.lastStateChange = Date.now();
 
     // Auto-clear corrupted session and retry
-    console.log('[WhatsApp] Clearing corrupted session after auth failure...');
-    const authDir = path.join(__dirname, '.wwebjs_auth');
+    console.log('[WhatsApp] Auth failure occurred. Destroying client and retrying without deleting session data...');
     try { await whatsappClient.destroy(); } catch (e) { /* ignore */ }
-    try { fs.rmSync(authDir, { recursive: true, force: true }); } catch (e) { /* ignore */ }
-    console.log('[WhatsApp] Session cleared. Retrying with fresh QR...');
+    // Intentionally NOT deleting the session here. Session is only deleted upon explicit user Logout.
+    console.log('[WhatsApp] Retrying initialization...');
     if (global.io) global.io.emit('dashboard_update');
     safeInitialize();
 });
