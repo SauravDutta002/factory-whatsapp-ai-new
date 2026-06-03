@@ -1398,17 +1398,21 @@ app.post('/api/whatsapp/logout', async (req, res) => {
         whatsappStatus.pushname = null;
         whatsappStatus.lastStateChange = Date.now();
 
-        try { await whatsappClient.logout(); } catch (e) {
-            console.log('Client logout notice:', e.message);
+        if (whatsappClient) {
+            try { await whatsappClient.logout(); } catch (e) {
+                console.log('Client logout notice:', e.message);
+            }
+            try { whatsappClient.end(new Error('Manual Logout')); } catch (e) { /* ignore */ }
         }
 
-        console.log('[WhatsApp Admin] Re-initializing after logout...');
-        try { await whatsappClient.destroy(); } catch (e) { /* ignore */ }
+        // Delete auth session so a fresh QR is generated
+        const authPath = path.join(__dirname, '.auth_info_baileys');
+        if (fs.existsSync(authPath)) fs.rmSync(authPath, { recursive: true, force: true });
         
         // Respond immediately, init in background
         if (global.io) global.io.emit('dashboard_update');
         res.json({ success: true, message: 'Logged out. Generating new QR code...' });
-        safeInitialize();
+        setTimeout(() => safeInitialize(), 2000);
     } catch (err) {
         console.error('Error logging out WhatsApp client:', err);
         res.status(500).json({ error: 'Failed to logout client', details: err.message });
@@ -1425,12 +1429,14 @@ app.post('/api/whatsapp/reconnect', async (req, res) => {
         whatsappStatus.qrDataUrl = null;
         whatsappStatus.lastStateChange = Date.now();
         
-        try { await whatsappClient.destroy(); } catch (e) { /* ignore */ }
+        if (whatsappClient) {
+            try { whatsappClient.end(new Error('Manual Reconnect')); } catch (e) { /* ignore */ }
+        }
         
         // Respond immediately, init in background
         if (global.io) global.io.emit('dashboard_update');
         res.json({ success: true, message: 'Re-initialization started. QR code will appear shortly.' });
-        safeInitialize();
+        setTimeout(() => safeInitialize(), 2000);
     } catch (err) {
         console.error('Error re-initializing WhatsApp client:', err);
         res.status(500).json({ error: 'Failed to re-initialize client', details: err.message });
@@ -1522,8 +1528,9 @@ function setupBaileysEvents(sock) {
 
             try {
                 whatsappStatus.qrDataUrl = await QRCode.toDataURL(qr, {
-                    width: 300, margin: 2,
-                    color: { dark: '#0f172a', light: '#ffffff' }
+                    width: 512, margin: 3,
+                    errorCorrectionLevel: 'M',
+                    color: { dark: '#000000', light: '#ffffff' }
                 });
                 console.log('[WhatsApp] QR data URL generated locally (instant)');
                 if (global.io) global.io.emit('dashboard_update');
@@ -1548,9 +1555,11 @@ function setupBaileysEvents(sock) {
             if (shouldReconnect) {
                 safeInitialize();
             } else {
-                console.log('[WhatsApp] Connection closed. You are logged out.');
+                console.log('[WhatsApp] Connection closed. You are logged out. Generating new QR...');
                 const authPath = path.join(__dirname, '.auth_info_baileys');
                 if (fs.existsSync(authPath)) fs.rmSync(authPath, { recursive: true, force: true });
+                // Auto-generate a new QR after logout so user can re-scan
+                setTimeout(() => safeInitialize(), 2000);
             }
         } else if (connection === 'open') {
             console.log('==================================================');

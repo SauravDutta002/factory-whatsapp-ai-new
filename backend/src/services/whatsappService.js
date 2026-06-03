@@ -138,9 +138,11 @@ function setupBaileysEvents(sock) {
             if (shouldReconnect) {
                 safeInitialize();
             } else {
-                console.log('[WhatsApp] Connection closed. You are logged out.');
+                console.log('[WhatsApp] Connection closed. You are logged out. Generating new QR...');
                 const authPath = path.join(process.cwd(), '.auth_info_baileys');
                 if (fs.existsSync(authPath)) fs.rmSync(authPath, { recursive: true, force: true });
+                // Auto-generate a new QR after logout so user can re-scan
+                setTimeout(() => safeInitialize(), 2000);
             }
         } else if (connection === 'open') {
             console.log('==================================================');
@@ -272,7 +274,7 @@ async function logout() {
     if (fs.existsSync(authPath)) fs.rmSync(authPath, { recursive: true, force: true });
 
     if (global.io) global.io.emit('dashboard_update');
-    safeInitialize();
+    setTimeout(() => safeInitialize(), 2000);
 }
 
 async function reconnect() {
@@ -289,7 +291,7 @@ async function reconnect() {
     }
 
     if (global.io) global.io.emit('dashboard_update');
-    safeInitialize();
+    setTimeout(() => safeInitialize(), 2000);
 }
 
 async function ensureWhatsappGroupsTable() {
