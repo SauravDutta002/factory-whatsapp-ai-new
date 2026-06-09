@@ -33,6 +33,27 @@ export default defineConfig(({ mode }) => {
           }
         }
       }
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (id.includes('react') || id.includes('react-dom')) {
+                return 'react-vendor';
+              }
+              if (id.includes('socket.io-client')) {
+                return 'socket-vendor';
+              }
+              if (id.includes('lucide-react')) {
+                return 'lucide-vendor';
+              }
+              return 'vendor'; // all other node_modules
+            }
+          }
+        }
+      },
+      chunkSizeWarningLimit: 600
     }
   }
 })

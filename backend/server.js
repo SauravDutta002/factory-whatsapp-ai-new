@@ -142,14 +142,20 @@ setInterval(() => {
     }
 }, 2000);
 
+const helmet = require('helmet');
+const compression = require('compression');
+const morgan = require('morgan');
+
+app.use(helmet({
+  contentSecurityPolicy: false // Disabled for simplicity if loading external scripts/images
+}));
+app.use(compression());
+app.use(morgan('combined'));
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 
 // Initialize Neon DB Postgres Pool
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
-});
+const pool = require('./src/config/db');
 
 async function ensureWhatsappGroupsTable() {
     try {
@@ -1686,6 +1692,41 @@ function setupBaileysEvents(sock) {
         }
     });
 }
+
+// --- Production Frontend Serving ---
+// In production, serve the compiled Vite frontend from the 'dist' directory
+if (process.env.NODE_ENV === 'production' || process.env.SERVE_STATIC === 'true') {
+    app.use(express.static(path.join(__dirname, '../frontend/dist')));
+    app.get('*', (req, res) => {
+        res.sendFile(path.resolve(__dirname, '../frontend/dist', 'index.html'));
+    });
+}
+
+// --- Graceful Shutdown ---
+function gracefulShutdown(signal) {
+    console.log(`\n[${signal}] Initiating graceful shutdown...`);
+    if (whatsappClient) {
+        console.log('Closing WhatsApp client...');
+        try { whatsappClient.end(new Error('Shutdown')); } catch(e) {}
+    }
+    console.log('Closing HTTP server...');
+    httpServer.close(() => {
+        console.log('Closing database pool...');
+        pool.end().then(() => {
+            console.log('Graceful shutdown complete. Exiting.');
+            process.exit(0);
+        });
+    });
+    
+    // Fallback force exit after 10 seconds
+    setTimeout(() => {
+        console.error('Could not close connections in time, forcefully shutting down');
+        process.exit(1);
+    }, 10000);
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 // Start Server
 httpServer.listen(PORT, async () => {

@@ -78,15 +78,22 @@ exports.getPending = async (req, res) => {
 
             let availableStock = '0';
             let skuValue = row.sku || '';
+            let regNoValue = row.reg_no || '';
+            let categoryValue = row.category || '';
+            let priceVal = row.rate || '';
             let suggestedMatch = 'No Match';
             let stockWarning = 'No Inventory Match';
-            let priceVal = row.rate || '';
 
             if (match) {
                 availableStock = (match.available_qty !== undefined ? match.available_qty : 0).toString();
-                skuValue = match.sku || skuValue;
+                
+                // Prioritize explicit row values over the inventory match
+                skuValue = row.sku || match.sku || '';
+                priceVal = row.rate || match.price || '';
+                regNoValue = row.reg_no || match.reg_no || '';
+                categoryValue = row.category || match.category || '';
+                
                 suggestedMatch = match.part_name || '';
-                priceVal = match.price || priceVal;
 
                 const reqQty = parseInt((row.qty || '').replace(/[^0-9]/g, ''), 10);
                 const stock = match.available_qty !== undefined ? match.available_qty : 0;
@@ -111,8 +118,8 @@ exports.getPending = async (req, res) => {
                 requestedBy: row.requested_by || 'WhatsApp User',
                 receivedAt: row.received_at || row.demand_timestamp,
                 sku: skuValue,
-                regNo: match ? (match.reg_no || '') : '',
-                category: row.category || (match ? match.category : ''),
+                regNo: regNoValue,
+                category: categoryValue,
                 price: priceVal,
                 availableStock,
                 stockWarning,
@@ -291,13 +298,13 @@ exports.edit = async (req, res) => {
         const queryText = `
             UPDATE pending_requests 
             SET part_name = $1, qty = $2, size = $3, material = $4, machine = $5, vendor = $6, rate = $7, 
-                edited_by = $8, edited_at = NOW()
-            WHERE id = $9
+                sku = $8, reg_no = $9, edited_by = $10, edited_at = NOW()
+            WHERE id = $11
             RETURNING *
         `;
         const values = [editData.partName || '', editData.qty || '', editData.size || '',
             editData.material || '', editData.machine || '', editData.vendor || '',
-            editData.price || editData.rate || '', editorRoleName, id];
+            editData.price || editData.rate || '', editData.sku || '', editData.regNo || '', editorRoleName, id];
 
         const result = await pool.query(queryText, values);
         if (result.rows.length === 0) return res.status(404).json({ error: 'Pending request not found' });

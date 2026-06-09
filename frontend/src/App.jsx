@@ -2367,7 +2367,7 @@ export default function App() {
               {globalModal.type === 'confirm' && (
                 <button onClick={globalModal.onCancel} disabled={globalModal.isLoading} className="modal-btn modal-btn-cancel">Cancel</button>
               )}
-              <button onClick={globalModal.onConfirm} disabled={globalModal.isLoading} className={`modal-btn ${globalModal.type === 'confirm' ? 'modal-btn-danger' : 'modal-btn-primary'}`}>
+              <button onClick={globalModal.onConfirm} disabled={globalModal.isLoading} className="modal-btn modal-btn-primary">
                 {globalModal.isLoading ? <><FiRefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> Processing</> : (globalModal.type === 'confirm' ? 'Proceed' : 'Okay')}
               </button>
             </div>
