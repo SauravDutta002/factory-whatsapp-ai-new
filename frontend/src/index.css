@@ -56,7 +56,8 @@ body {
 }
 
 .sidebar {
-  width: 280px;
+  width: 92px;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   background-color: var(--bg-sidebar);
   border-right: 1px solid var(--border-light);
   display: flex;
@@ -143,6 +144,40 @@ body {
   min-height: 20px;
   flex-shrink: 0;
   stroke-width: 2px;
+}
+
+/* Retractable Sidebar Hover Logic */
+.sidebar:hover {
+  width: 280px;
+}
+
+.sidebar:not(:hover) .sidebar-brand,
+.sidebar:not(:hover) .sidebar-section-label,
+.sidebar:not(:hover) .sidebar-footer > div:first-child {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sidebar-brand,
+.sidebar-section-label,
+.sidebar-footer > div:first-child {
+  transition: opacity 0.2s ease;
+}
+
+.sidebar:not(:hover) .sidebar-menu-item {
+  color: transparent !important;
+}
+
+.sidebar:not(:hover) .sidebar-menu-item .sidebar-icon {
+  color: var(--text-secondary);
+}
+
+.sidebar:not(:hover) .sidebar-menu-item.active .sidebar-icon {
+  color: var(--accent-blue-text) !important;
+}
+
+.sidebar:not(:hover) .sidebar-menu-item.danger .sidebar-icon {
+  color: var(--accent-rose-text) !important;
 }
 
 .sidebar-footer {

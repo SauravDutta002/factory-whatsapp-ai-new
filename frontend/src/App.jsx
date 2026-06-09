@@ -921,22 +921,7 @@ export default function App() {
           )}
         </nav>
 
-        {/* Audio Logs Sidebar Attachment */}
-        <div className="sidebar-section-label" style={{ marginTop: '1.5rem' }}>Audio Notes Log</div>
-        <div className="audio-library-wrapper">
-          {voiceNotes.length === 0 ? (
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', paddingLeft: '0.5rem' }}>No voice files logged</div>
-          ) : (
-            voiceNotes.slice(0, 4).map((note) => (
-              <a key={note.filename} href={note.url} target="_blank" rel="noreferrer" className="audio-lib-item">
-                <svg className="audio-lib-play-icon" viewBox="0 0 24 24">
-                  <path d="M8 5v14l11-7z" />
-                </svg>
-                <span>Voice {new Date(note.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-              </a>
-            ))
-          )}
-        </div>
+
 
         <div className="sidebar-footer" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           
